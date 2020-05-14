@@ -157,8 +157,12 @@ namespace gazebo {
         private: event::ConnectionPtr updateConnection;
         double baro_rnd_y2_;
         bool baro_rnd_use_last_;
-        float _cmd_vel[4];
-
+        //float _cmd_vel[4];
+        std::vector< float > _cmd_vel;
+        string _model_name; 
+        float _motor_size;
+        bool _motor_cmd_ready;
+        
         public: void GroundtruthCallback(GtPtr& groundtruth_msg) {
             // update groundtruth lat_rad, lon_rad and altitude
             groundtruth_lat_rad = groundtruth_msg->latitude_rad();
@@ -169,65 +173,8 @@ namespace gazebo {
         }
 
 
-        public: void handle_control(double _dt) {
-            
-            // set joint positions
-            for (int i = 0; i < input_reference_.size(); i++) {
-                if (joints_[i]) {
-                    double target = input_reference_[i];
-                    if (joint_control_type_[i] == "velocity") {
-                        double current = joints_[i]->GetVelocity(0);
-                        double err = current - target;
-                        double force = pids_[i].Update(err, _dt);
-                        joints_[i]->SetForce(0, force);
-                    }
-                    else if (joint_control_type_[i] == "position") {
-
-                #if GAZEBO_MAJOR_VERSION >= 9
-                        double current = joints_[i]->Position(0);
-                #else
-                        double current = joints_[i]->GetAngle(0).Radian();
-                #endif
-
-                        double err = current - target;
-                        double force = pids_[i].Update(err, _dt);
-                        joints_[i]->SetForce(0, force);
-                    }
-                    else if (joint_control_type_[i] == "position_gztopic") {
-                    #if GAZEBO_MAJOR_VERSION >= 7 && GAZEBO_MINOR_VERSION >= 4
-                        /// only gazebo 7.4 and above support Any
-                        gazebo::msgs::Any m;
-                        m.set_type(gazebo::msgs::Any_ValueType_DOUBLE);
-                        m.set_double_value(target);
-                    #else
-                        std::stringstream ss;
-                        gazebo::msgs::GzString m;
-                        ss << target;
-                        m.set_data(ss.str());
-                    #endif
-                        joint_control_pub_[i]->Publish(m);
-                    }
-                    else if (joint_control_type_[i] == "position_kinematic") {
-                        /// really not ideal if your drone is moving at all,
-                        /// mixing kinematic updates with dynamics calculation is
-                        /// non-physical.
-                    #if GAZEBO_MAJOR_VERSION >= 6
-                        joints_[i]->SetPosition(0, input_reference_[i]);
-                    #else
-                        joints_[i]->SetAngle(0, input_reference_[i]);
-                    #endif
-                    }
-                    else {
-                        gzerr << "joint_control_type[" << joint_control_type_[i] << "] undefined.\n";
-                    }
-                }
-            }
-            
-        }
-
-
         public: void Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf) {	
-
+            
             _node_handle = new ros::NodeHandle();	
             model_ = _parent;
 
@@ -238,22 +185,12 @@ namespace gazebo {
                 alt_home = std::stod(env_alt);
             }
             
-            _cmd_vel[0] = _cmd_vel[1] = _cmd_vel[2] = _cmd_vel[3] = 0.0;
-            /*
-            namespace_.clear();
-            if (_sdf->HasElement("robotNamespace")) {
-                namespace_ = _sdf->GetElement("robotNamespace")->Get<std::string>();
-            } 
-            else {
-                gzerr << "[gazebo_mavlink_interface] Please specify a robotNamespace.\n";
-            }
 
-            if (_sdf->HasElement("protocol_version")) {
-                protocol_version_ = _sdf->GetElement("protocol_version")->Get<float>();
-            }
-            */
+            //_cmd_vel[0] = _cmd_vel[1] = _cmd_vel[2] = _cmd_vel[3] = 0.0;
+         
+         
             _gz_node = transport::NodePtr(new transport::Node());
-            _gz_node->Init("default");
+            _gz_node->Init(model_->GetName());
             
             getSdfParam<std::string>(_sdf, "motorSpeedCommandPubTopic", motor_velocity_reference_pub_topic_, motor_velocity_reference_pub_topic_);
             getSdfParam<std::string>(_sdf, "imuSubTopic", imu_sub_topic_, imu_sub_topic_);
@@ -263,18 +200,14 @@ namespace gazebo {
             getSdfParam<std::string>(_sdf, "opticalFlowSubTopic", opticalFlow_sub_topic_, opticalFlow_sub_topic_);
             getSdfParam<std::string>(_sdf, "sonarSubTopic", sonar_sub_topic_, sonar_sub_topic_);
             getSdfParam<std::string>(_sdf, "irlockSubTopic", irlock_sub_topic_, irlock_sub_topic_);
+
+            
+            getSdfParam<float>(_sdf, "motorSize", _motor_size, _motor_size);
+            _cmd_vel.resize( n_out_max );
+            for( int i=0; i< n_out_max; i++ ) _cmd_vel[i] = 0.0;
             groundtruth_sub_topic_ = "/groundtruth";
 
-            cout << "PARAMS: " << endl;
-            cout << "motor_velocity_reference_pub_topic: " << motor_velocity_reference_pub_topic_ << endl;
-            cout << "gpsSubTopic: " << gps_sub_topic_ << endl;
-            cout << "imuSubTopic: " << imu_sub_topic_ << endl;
-            cout << "visionSubTopic: " << vision_sub_topic_ << endl;
-            cout << "lidarSubTopic: " << lidar_sub_topic_ << endl;
-            cout << "opticalFlowSubTopic: " << opticalFlow_sub_topic_ << endl;
-            cout << "sonarSubTopic: " << sonar_sub_topic_ << endl;
-            cout << "irlockSubTopic: " << irlock_sub_topic_ << endl;
-
+        
             // set input_reference_ from inputs.control
             input_reference_.resize(n_out_max);
             joints_.resize(n_out_max);
@@ -283,9 +216,11 @@ namespace gazebo {
                 pids_[i].Init(0, 0, 0, 0, 0, 0, 0);
                 input_reference_[i] = 0;
             }
+
+
+            _model_name = model_->GetName();
             
             if (_sdf->HasElement("control_channels")) {
-
                 
                 sdf::ElementPtr control_channels = _sdf->GetElement("control_channels");
                 sdf::ElementPtr channel = control_channels->GetElement("channel");
@@ -381,6 +316,7 @@ namespace gazebo {
                 
             }
 
+
             // Listen to the update event. This event is broadcast every
             // simulation iteration.
             this->updateConnection = event::Events::ConnectWorldUpdateBegin(std::bind(&GazeboROSInterface::OnUpdate, this));
@@ -390,20 +326,21 @@ namespace gazebo {
             //opticalFlow_sub_ = node_handle_->Subscribe("~/" + model_->GetName() + opticalFlow_sub_topic_, &GazeboROSInterface::OpticalFlowCallback, this);
             //sonar_sub_ = node_handle_->Subscribe("~/" + model_->GetName() + sonar_sub_topic_, &GazeboROSInterface::SonarCallback, this);
             //irlock_sub_ = node_handle_->Subscribe("~/" + model_->GetName() + irlock_sub_topic_, &GazeboROSInterface::IRLockCallback, this);
-            imu_sub_ = _gz_node->Subscribe("/gazebo/default/tarot_standalone/imu", &GazeboROSInterface::ImuCallback, this);           
+            //imu_sub_ = _gz_node->Subscribe("/gazebo/default/tarot_standalone/imu", &GazeboROSInterface::ImuCallback, this);           
             groundtruth_sub_ = _gz_node->Subscribe("~/" + model_->GetName() + groundtruth_sub_topic_, &GazeboROSInterface::GroundtruthCallback, this);
             _local_pose_sub = _node_handle->subscribe("/gazebo/model_states", 0, &GazeboROSInterface::GzModelsCallback, this);
             gps_sub_ = _gz_node->Subscribe("~/" + model_->GetName() + gps_sub_topic_, &GazeboROSInterface::GpsCallback, this);
-            _motor_vel_sub = _node_handle->subscribe("/tarot_standalone/motor_vel", 0, &GazeboROSInterface::MotorVelCallback, this);
+            _motor_vel_sub = _node_handle->subscribe( model_->GetName() + "/cmd/motor_vel", 0, &GazeboROSInterface::MotorVelCallback, this);
             
             //vision_sub_ = node_handle_->Subscribe("~/" + model_->GetName() + vision_sub_topic_, &GazeboROSInterface::VisionCallback, this);
     
             // Output
             _imu_pub = _node_handle->advertise<sensor_msgs::Imu>("/tarot/imu/data", 0);
             _gps_pub = _node_handle->advertise<sensor_msgs::NavSatFix>("tarot/gps/fix", 0);      
+
             motor_velocity_reference_pub_ = _gz_node->Advertise<mav_msgs::msgs::CommandMotorSpeed>("~/" + model_->GetName() + motor_velocity_reference_pub_topic_, 1);
-            _local_pose_pub = _node_handle->advertise<geometry_msgs::PoseStamped>("/tarot/local_pose", 0);
-            _local_vel_pub = _node_handle->advertise<geometry_msgs::TwistStamped>("/tarot/local_vel", 0);
+            _local_pose_pub = _node_handle->advertise<geometry_msgs::PoseStamped>( model_->GetName() + "/local_pose", 0);
+            _local_vel_pub = _node_handle->advertise<geometry_msgs::TwistStamped>( model_->GetName() + "/local_vel", 0);
 
             _rotor_count = 5;
             #if GAZEBO_MAJOR_VERSION >= 9
@@ -500,14 +437,14 @@ namespace gazebo {
     }
 
     void GzModelsCallback( gazebo_msgs::ModelStates model_data ) {
-
+        //cout << "GzModelsCallback" << endl;
         geometry_msgs::PoseStamped pose;
         geometry_msgs::TwistStamped vel;
 
         bool found = false;
         int index = 0;
         while( !found && index < model_data.name.size() ) {
-            if( model_data.name[index] != "tarot_standalone" ) {
+            if( model_data.name[index] != _model_name  ) {
                 index++;
             }
             else found = true;            
@@ -568,44 +505,10 @@ namespace gazebo {
 
     void GpsCallback(GpsPtr& gps_msg){
         sensor_msgs::NavSatFix gps;
-
         gps.latitude = gps_msg->latitude_deg();
         gps.longitude = gps_msg->longitude_deg();
         gps.altitude = gps_msg->altitude();
         _gps_pub.publish( gps );
-        /*
-        // fill HIL GPS Mavlink msg
-        mavlink_hil_gps_t hil_gps_msg;
-        hil_gps_msg.time_usec = gps_msg->time() * 1e6;
-        hil_gps_msg.fix_type = 3;
-        hil_gps_msg.lat = gps_msg->latitude_deg() * 1e7;
-        hil_gps_msg.lon = gps_msg->longitude_deg() * 1e7;
-        hil_gps_msg.alt = gps_msg->altitude() * 1000.0;
-        hil_gps_msg.eph = gps_msg->eph() * 100.0;
-        hil_gps_msg.epv = gps_msg->epv() * 100.0;
-        hil_gps_msg.vel = gps_msg->velocity() * 100.0;
-        hil_gps_msg.vn = gps_msg->velocity_north() * 100.0;
-        hil_gps_msg.ve = gps_msg->velocity_east() * 100.0;
-        hil_gps_msg.vd = -gps_msg->velocity_up() * 100.0;
-        // MAVLINK_HIL_GPS_T CoG is [0, 360]. math::Angle::Normalize() is [-pi, pi].
-        ignition::math::Angle cog(atan2(gps_msg->velocity_east(), gps_msg->velocity_north()));
-        cog.Normalize();
-        hil_gps_msg.cog = static_cast<uint16_t>(GetDegrees360(cog) * 100.0);
-        hil_gps_msg.satellites_visible = 10;
-
-        // send HIL_GPS Mavlink msg
-        mavlink_message_t msg;
-        mavlink_msg_hil_gps_encode_chan(1, 200, MAVLINK_COMM_0, &msg, &hil_gps_msg);
-        if (hil_mode_) {
-        if (!hil_state_level_){
-        send_mavlink_message(&msg);
-        }
-        }
-
-        else {
-        send_mavlink_message(&msg);
-        }
-        */
     }
 
     public: void MotorVelCallback( std_msgs::Float32MultiArray motor_vel_ ) {
@@ -616,14 +519,13 @@ namespace gazebo {
 #endif
 
 
-        if( motor_vel_.data.size()<4) {
-
+        if( motor_vel_.data.size() != _motor_size) {
+            cout << "Error: mismatch motor velocity and the number of motor size: " << motor_vel_.data.size() << " / " << _motor_size << endl;
         }
         else {
-            _cmd_vel[0] = motor_vel_.data[0];
-            _cmd_vel[1] = motor_vel_.data[1];
-            _cmd_vel[2] = motor_vel_.data[2];
-            _cmd_vel[3] = motor_vel_.data[3];
+            for( int i=0; i<motor_vel_.data.size(); i++ ) {
+                _cmd_vel[i] = motor_vel_.data[i];
+            }
         }
     }
 
@@ -637,7 +539,6 @@ namespace gazebo {
         common::Time current_time = world_->GetSimTime();
 #endif
 
-
         double dt = (current_time - last_time_).Double();
 
         mav_msgs::msgs::CommandMotorSpeed turning_velocities_msg;
@@ -646,9 +547,8 @@ namespace gazebo {
                 turning_velocities_msg.add_motor_speed(0);
             } //No power 
             else {
+                //cout << "vel " << i << " " <<  _cmd_vel[i] << endl;
                 turning_velocities_msg.add_motor_speed( _cmd_vel[i] );
-                //turning_velocities_msg.add_motor_speed(1000.0);
-                //std::cout << "Motor: " << i << "]: "<< input_reference_[i] << std::endl;
             }
         }
 
