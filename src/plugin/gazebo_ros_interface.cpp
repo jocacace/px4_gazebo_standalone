@@ -49,7 +49,8 @@
 #include <gazebo/common/common.hh>
 #include <tf/transform_broadcaster.h>
 #include <ctime>
-#include <Eigen/Eigen>
+//#include <Eigen/Eigen>
+#include <Eigen/Dense>
 #include <random>
 #include "sensor_msgs/Imu.h"
 #include "sensor_msgs/NavSatFix.h"
@@ -151,8 +152,15 @@ namespace gazebo {
         transport::PublisherPtr motor_velocity_reference_pub_;
 
         unsigned _rotor_count;
-        ignition::math::Quaterniond q_br = ignition::math::Quaterniond(0, 1, 0, 0);
-        ignition::math::Quaterniond q_ng = ignition::math::Quaterniond(0, 0.70711, 0.70711, 0);
+        //ordine del quat -> w,x,y,z
+        ignition::math::Quaterniond q_br = ignition::math::Quaterniond(0, 1, 0, 0); //rotazione di -pi intorno ad X
+        ignition::math::Quaterniond q_ng = ignition::math::Quaterniond(0, 0.70711, 0.70711, 0); // x: -3.1415927, y: 0, z: -1.5707963 
+        
+        //ignition::math::Quaterniond qr_ned = ignition::math::Quaterniond(0, 1, 0, 0); //da terna robot a terna ned
+        //Quaternion for ENU to NOU
+        //ignition::math::Quaterniond q_enu2nou = ignition::math::Quaterniond(0.70711, 0.0, 0.0, 0.70711);
+        Eigen::Matrix<double, 3,3> R_nou2ned;
+        
 
         private: event::ConnectionPtr updateConnection;
         double baro_rnd_y2_;
@@ -377,8 +385,6 @@ namespace gazebo {
             imu_message->orientation().z());
 
 
-
-
         ignition::math::Quaterniond q_gb = q_gr*q_br.Inverse();
         ignition::math::Quaterniond q_nb = q_ng*q_gb;
 
@@ -451,55 +457,62 @@ namespace gazebo {
         }
 
         if (found) {
+            R_nou2ned << 1, 0, 0, 0, -1, 0, 0, 0, -1;
+            Eigen::Vector3d pos_ned, pos_nou;
+            Eigen::Vector3d lin_vel_ned, lin_vel_nou;
+            Eigen::Vector3d ang_vel_ned, ang_vel_nou;
+            Eigen::Matrix3d R_body2world_nou, R_body2world_ned;
 
-            // transform position from local ENU to local NED frame
-            ignition::math::Vector3d position = q_ng.RotateVector(ignition::math::Vector3d( 
-                model_data.pose[index].position.x,
-                model_data.pose[index].position.y,
-                model_data.pose[index].position.z
-            ) );
+            pos_nou << model_data.pose[index].position.x,
+                       model_data.pose[index].position.y,
+                       model_data.pose[index].position.z;
+                
+            pos_ned = R_nou2ned * pos_nou;
 
-            pose.pose.position.x = position.X();
-            pose.pose.position.y = position.Y();
-            pose.pose.position.z = position.Z();
+            pose.pose.position.x = pos_ned(0);
+            pose.pose.position.y = pos_ned(1);
+            pose.pose.position.z = pos_ned(2);
 
-            ignition::math::Quaterniond q_gr = ignition::math::Quaterniond(
+            Eigen::Quaterniond q_att_nou(
                 model_data.pose[index].orientation.w,
                 model_data.pose[index].orientation.x,
                 model_data.pose[index].orientation.y,
                 model_data.pose[index].orientation.z);
 
-            ignition::math::Quaterniond q_gb = q_gr*q_br.Inverse();
-            ignition::math::Quaterniond q_nb = q_ng*q_gb;
+            R_body2world_nou = q_att_nou.toRotationMatrix();
+            R_body2world_ned = R_nou2ned * R_body2world_nou * R_nou2ned.transpose();
 
-            pose.pose.orientation.x = q_nb.X();
-            pose.pose.orientation.y = q_nb.Y();
-            pose.pose.orientation.z = q_nb.Z();
-            pose.pose.orientation.w = q_nb.W();
+            Eigen::Quaterniond q_att_ned( R_body2world_ned );
+
+            pose.pose.orientation.x = q_att_ned.x();
+            pose.pose.orientation.y = q_att_ned.y();
+            pose.pose.orientation.z = q_att_ned.z();
+            pose.pose.orientation.w = q_att_ned.w();
     
             _local_pose_pub.publish(pose);
 
-            ignition::math::Vector3d linear_velocity = q_ng.RotateVector(ignition::math::Vector3d( 
-                model_data.twist[index].linear.x,
-                model_data.twist[index].linear.y,
-                model_data.twist[index].linear.z
-            ) );
+            lin_vel_nou << model_data.twist[index].linear.x,
+                           model_data.twist[index].linear.y,
+                           model_data.twist[index].linear.z;
 
-            vel.twist.linear.x = linear_velocity.X();
-            vel.twist.linear.y = linear_velocity.Y();
-            vel.twist.linear.z = linear_velocity.Z();
+            lin_vel_ned = R_nou2ned * lin_vel_nou;
 
-            ignition::math::Vector3d angular_velocity = q_ng.RotateVector(ignition::math::Vector3d( 
-                model_data.twist[index].angular.x,
-                model_data.twist[index].angular.y,
-                model_data.twist[index].angular.z
-            ) );
+            vel.twist.linear.x = lin_vel_ned(0);
+            vel.twist.linear.y = lin_vel_ned(1);
+            vel.twist.linear.z = lin_vel_ned(2);
 
-            vel.twist.angular.x = angular_velocity.X();
-            vel.twist.angular.y = angular_velocity.Y();
-            vel.twist.angular.z = angular_velocity.Z();
+            ang_vel_nou << model_data.twist[index].angular.x,
+                           model_data.twist[index].angular.y,
+                           model_data.twist[index].angular.z;
+
+            ang_vel_ned = R_nou2ned * ang_vel_nou;
+
+            vel.twist.angular.x = ang_vel_ned(0);
+            vel.twist.angular.y = ang_vel_ned(1);
+            vel.twist.angular.z = ang_vel_ned(2);
 
             _local_vel_pub.publish(vel);
+           
         }
     }
 

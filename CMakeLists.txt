@@ -18,26 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
 )
 
-find_package(Eigen3 QUIET)
-if(NOT EIGEN3_FOUND)
-  # Fallback to cmake_modules
-  find_package(Eigen QUIET)
-  if(NOT EIGEN_FOUND)
-    pkg_check_modules(EIGEN3 REQUIRED eigen3)
-  else()
-    set(EIGEN3_INCLUDE_DIRS ${EIGEN_INCLUDE_DIRS})
-    set(EIGEN3_LIBRARIES ${EIGEN_LIBRARIES})
-  endif()
-else()
-  set(EIGEN3_INCLUDE_DIRS ${EIGEN3_INCLUDE_DIR})
-endif()
-
-include_directories(
-  include
-  ${EIGEN3_INCLUDE_DIRS}
-  ${EIGEN3_INCLUDE_DIRS}/eigen3	# Workaround for Eigen3
-)
-
+include_directories( /usr/local/include/eigen3/ )
 include_directories( src/mavlink/v2.0/)
 
 ## System dependencies are found with CMake's conventions
