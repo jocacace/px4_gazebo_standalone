@@ -452,7 +452,35 @@ namespace gazebo {
 
         if (found) {
 
+            pose.pose.position.x = model_data.pose[index].position.x;
+            pose.pose.position.y = model_data.pose[index].position.y;
+            pose.pose.position.z = model_data.pose[index].position.z;
+
+            ignition::math::Quaterniond q_gr = ignition::math::Quaterniond(
+                model_data.pose[index].orientation.w,
+                model_data.pose[index].orientation.x,
+                model_data.pose[index].orientation.y,
+                model_data.pose[index].orientation.z);
+
+            pose.pose.orientation.x = q_gr.X();
+            pose.pose.orientation.y = q_gr.Y();
+            pose.pose.orientation.z = q_gr.Z();
+            pose.pose.orientation.w = q_gr.W();
+    
+            _local_pose_pub.publish(pose);
+
+            vel.twist.linear.x = model_data.twist[index].linear.x;
+            vel.twist.linear.y = model_data.twist[index].linear.y;
+            vel.twist.linear.z = model_data.twist[index].linear.z;
+
+            vel.twist.angular.x = model_data.twist[index].angular.x;
+            vel.twist.angular.y = model_data.twist[index].angular.y;
+            vel.twist.angular.z = model_data.twist[index].angular.z;
+
+            _local_vel_pub.publish(vel);
+            
             // transform position from local ENU to local NED frame
+            /*
             ignition::math::Vector3d position = q_ng.RotateVector(ignition::math::Vector3d( 
                 model_data.pose[index].position.x,
                 model_data.pose[index].position.y,
@@ -500,6 +528,7 @@ namespace gazebo {
             vel.twist.angular.z = angular_velocity.Z();
 
             _local_vel_pub.publish(vel);
+            */
         }
     }
 
