@@ -488,7 +488,7 @@ namespace gazebo {
             pose.pose.orientation.y = q_att_ned.y();
             pose.pose.orientation.z = q_att_ned.z();
             pose.pose.orientation.w = q_att_ned.w();
-    
+
             _local_pose_pub.publish(pose);
 
             lin_vel_nou << model_data.twist[index].linear.x,

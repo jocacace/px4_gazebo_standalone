@@ -18,7 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
 )
 
-include_directories( /usr/local/include/eigen3/ )
+include_directories( /usr/include/eigen3/ )
 include_directories( src/mavlink/v2.0/)
 
 ## System dependencies are found with CMake's conventions
