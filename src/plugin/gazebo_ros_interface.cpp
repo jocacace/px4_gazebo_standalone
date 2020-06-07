@@ -211,16 +211,17 @@ namespace gazebo {
             getSdfParam<std::string>(_sdf, "odomFrame", output_odometry_frame, output_odometry_frame);
 
             
-            if( output_odometry_frame != "NED"  ) { 
+            if( output_odometry_frame == "NED"  ) { 
                 frame = NED;
             }
-            else if( output_odometry_frame != "ENU" ) { 
+            else if( output_odometry_frame == "ENU" ) { 
                 frame = ENU;
             }
-            else if( output_odometry_frame != "NOU" ) {
+            else if( output_odometry_frame == "NOU" ) {
                 frame = NOU;
             }
-            else if( output_odometry_frame != "NED" &&  output_odometry_frame != "NOU" ) {
+            
+            if( output_odometry_frame != "NED" &&  output_odometry_frame != "NOU" ) {
                 cout << "Output odometry frame: " << output_odometry_frame << " not supported" << endl << "Switch on NED odometry frame" << endl;
                 frame = NED;
             }
@@ -484,7 +485,6 @@ namespace gazebo {
             odom.header.stamp = ros::Time::now();
             odom.header.frame_id = "world";
 
-
             if ( frame == NOU ) {
 
                 pose.pose.position.x = model_data.pose[index].position.x;
@@ -527,62 +527,61 @@ namespace gazebo {
                 odom.twist.twist = vel.twist;        
             }
             else if( frame == NED ) {
+                R_nou2ned << 1, 0, 0, 0, -1, 0, 0, 0, -1;
+                Eigen::Vector3d pos_ned, pos_nou;
+                Eigen::Vector3d lin_vel_ned, lin_vel_nou;
+                Eigen::Vector3d ang_vel_ned, ang_vel_nou;
+                Eigen::Matrix3d R_body2world_nou, R_body2world_ned;
 
-                          R_nou2ned << 1, 0, 0, 0, -1, 0, 0, 0, -1;
-            Eigen::Vector3d pos_ned, pos_nou;
-            Eigen::Vector3d lin_vel_ned, lin_vel_nou;
-            Eigen::Vector3d ang_vel_ned, ang_vel_nou;
-            Eigen::Matrix3d R_body2world_nou, R_body2world_ned;
+                pos_nou << model_data.pose[index].position.x,
+                        model_data.pose[index].position.y,
+                        model_data.pose[index].position.z;
+                    
+                pos_ned = R_nou2ned * pos_nou;
 
-            pos_nou << model_data.pose[index].position.x,
-                       model_data.pose[index].position.y,
-                       model_data.pose[index].position.z;
-                
-            pos_ned = R_nou2ned * pos_nou;
+                pose.pose.position.x = pos_ned(0);
+                pose.pose.position.y = pos_ned(1);
+                pose.pose.position.z = pos_ned(2);
 
-            pose.pose.position.x = pos_ned(0);
-            pose.pose.position.y = pos_ned(1);
-            pose.pose.position.z = pos_ned(2);
+                Eigen::Quaterniond q_att_nou(
+                    model_data.pose[index].orientation.w,
+                    model_data.pose[index].orientation.x,
+                    model_data.pose[index].orientation.y,
+                    model_data.pose[index].orientation.z);
 
-            Eigen::Quaterniond q_att_nou(
-                model_data.pose[index].orientation.w,
-                model_data.pose[index].orientation.x,
-                model_data.pose[index].orientation.y,
-                model_data.pose[index].orientation.z);
+                R_body2world_nou = q_att_nou.toRotationMatrix();
+                R_body2world_ned = R_nou2ned * R_body2world_nou * R_nou2ned.transpose();
 
-            R_body2world_nou = q_att_nou.toRotationMatrix();
-            R_body2world_ned = R_nou2ned * R_body2world_nou * R_nou2ned.transpose();
+                Eigen::Quaterniond q_att_ned( R_body2world_ned );
 
-            Eigen::Quaterniond q_att_ned( R_body2world_ned );
+                pose.pose.orientation.x = q_att_ned.x();
+                pose.pose.orientation.y = q_att_ned.y();
+                pose.pose.orientation.z = q_att_ned.z();
+                pose.pose.orientation.w = q_att_ned.w();
 
-            pose.pose.orientation.x = q_att_ned.x();
-            pose.pose.orientation.y = q_att_ned.y();
-            pose.pose.orientation.z = q_att_ned.z();
-            pose.pose.orientation.w = q_att_ned.w();
+                _local_pose_pub.publish(pose);
 
-            _local_pose_pub.publish(pose);
+                lin_vel_nou << model_data.twist[index].linear.x,
+                            model_data.twist[index].linear.y,
+                            model_data.twist[index].linear.z;
 
-            lin_vel_nou << model_data.twist[index].linear.x,
-                           model_data.twist[index].linear.y,
-                           model_data.twist[index].linear.z;
+                lin_vel_ned = R_nou2ned * lin_vel_nou;
 
-            lin_vel_ned = R_nou2ned * lin_vel_nou;
+                vel.twist.linear.x = lin_vel_ned(0);
+                vel.twist.linear.y = lin_vel_ned(1);
+                vel.twist.linear.z = lin_vel_ned(2);
 
-            vel.twist.linear.x = lin_vel_ned(0);
-            vel.twist.linear.y = lin_vel_ned(1);
-            vel.twist.linear.z = lin_vel_ned(2);
+                ang_vel_nou << model_data.twist[index].angular.x,
+                            model_data.twist[index].angular.y,
+                            model_data.twist[index].angular.z;
 
-            ang_vel_nou << model_data.twist[index].angular.x,
-                           model_data.twist[index].angular.y,
-                           model_data.twist[index].angular.z;
+                ang_vel_ned = R_nou2ned * ang_vel_nou;
 
-            ang_vel_ned = R_nou2ned * ang_vel_nou;
+                vel.twist.angular.x = ang_vel_ned(0);
+                vel.twist.angular.y = ang_vel_ned(1);
+                vel.twist.angular.z = ang_vel_ned(2);
 
-            vel.twist.angular.x = ang_vel_ned(0);
-            vel.twist.angular.y = ang_vel_ned(1);
-            vel.twist.angular.z = ang_vel_ned(2);
-
-            _local_vel_pub.publish(vel);
+                _local_vel_pub.publish(vel);
                 odom.pose.pose.position.x = pose.pose.position.x;
                 odom.pose.pose.position.y = pose.pose.position.y;
                 odom.pose.pose.position.z = pose.pose.position.z;
