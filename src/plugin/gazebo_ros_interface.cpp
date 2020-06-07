@@ -56,6 +56,7 @@
 #include "gazebo_msgs/ModelStates.h"
 #include "geometry_msgs/PoseStamped.h"
 #include "std_msgs/Float32MultiArray.h"
+#include "nav_msgs/Odometry.h"
 
 using namespace std;
 	
@@ -83,6 +84,10 @@ bool getSdfParam(sdf::ElementPtr sdf, const std::string& name, T& param, const T
 }
 
 namespace gazebo {
+
+
+    enum outputFrame { NED, NOU, ENU };
+
     typedef const boost::shared_ptr<const sensor_msgs::msgs::Imu> ImuPtr;
     typedef const boost::shared_ptr<const sensor_msgs::msgs::Groundtruth> GtPtr;
     typedef const boost::shared_ptr<const sensor_msgs::msgs::SITLGps> GpsPtr;
@@ -108,7 +113,7 @@ namespace gazebo {
         std::string sonar_sub_topic_;
         std::string irlock_sub_topic_;
         std::string groundtruth_sub_topic_;
-
+        std::string output_odometry_frame;
         std::vector<physics::JointPtr> joints_;
         std::vector<common::PID> pids_;
         double input_offset_[n_out_max];
@@ -129,11 +134,12 @@ namespace gazebo {
 
         ros::Publisher _imu_pub;
         ros::Publisher _gps_pub;
+        ros::Publisher _odom_pub;
         ros::Subscriber _local_pose_sub;
         ros::Subscriber _motor_vel_sub;
         ros::Publisher _local_pose_pub;
         ros::Publisher _local_vel_pub;
-
+        Eigen::Matrix<double, 3,3> R_nou2ned;
         common::Time last_time_;
         common::Time last_imu_time_;
         common::Time last_actuator_time_;
@@ -162,7 +168,8 @@ namespace gazebo {
         string _model_name; 
         float _motor_size;
         bool _motor_cmd_ready;
-        
+        outputFrame frame;
+
         public: void GroundtruthCallback(GtPtr& groundtruth_msg) {
             // update groundtruth lat_rad, lon_rad and altitude
             groundtruth_lat_rad = groundtruth_msg->latitude_rad();
@@ -200,6 +207,25 @@ namespace gazebo {
             getSdfParam<std::string>(_sdf, "opticalFlowSubTopic", opticalFlow_sub_topic_, opticalFlow_sub_topic_);
             getSdfParam<std::string>(_sdf, "sonarSubTopic", sonar_sub_topic_, sonar_sub_topic_);
             getSdfParam<std::string>(_sdf, "irlockSubTopic", irlock_sub_topic_, irlock_sub_topic_);
+
+            getSdfParam<std::string>(_sdf, "odomFrame", output_odometry_frame, output_odometry_frame);
+
+            
+            if( output_odometry_frame != "NED"  ) { 
+                frame = NED;
+            }
+            else if( output_odometry_frame != "ENU" ) { 
+                frame = ENU;
+            }
+            else if( output_odometry_frame != "NOU" ) {
+                frame = NOU;
+            }
+            else if( output_odometry_frame != "NED" &&  output_odometry_frame != "NOU" ) {
+                cout << "Output odometry frame: " << output_odometry_frame << " not supported" << endl << "Switch on NED odometry frame" << endl;
+                frame = NED;
+            }
+            
+
 
             
             getSdfParam<float>(_sdf, "motorSize", _motor_size, _motor_size);
@@ -337,6 +363,7 @@ namespace gazebo {
             // Output
             _imu_pub = _node_handle->advertise<sensor_msgs::Imu>("/tarot/imu/data", 0);
             _gps_pub = _node_handle->advertise<sensor_msgs::NavSatFix>("tarot/gps/fix", 0);      
+            _odom_pub = _node_handle->advertise<nav_msgs::Odometry>( model_->GetName() + "/odometry", 0);
 
             motor_velocity_reference_pub_ = _gz_node->Advertise<mav_msgs::msgs::CommandMotorSpeed>("~/" + model_->GetName() + motor_velocity_reference_pub_topic_, 1);
             _local_pose_pub = _node_handle->advertise<geometry_msgs::PoseStamped>( model_->GetName() + "/local_pose", 0);
@@ -452,83 +479,130 @@ namespace gazebo {
 
         if (found) {
 
-            pose.pose.position.x = model_data.pose[index].position.x;
-            pose.pose.position.y = model_data.pose[index].position.y;
-            pose.pose.position.z = model_data.pose[index].position.z;
 
-            ignition::math::Quaterniond q_gr = ignition::math::Quaterniond(
+            nav_msgs::Odometry odom;
+            odom.header.stamp = ros::Time::now();
+            odom.header.frame_id = "world";
+
+
+            if ( frame == NOU ) {
+
+                pose.pose.position.x = model_data.pose[index].position.x;
+                pose.pose.position.y = model_data.pose[index].position.y;
+                pose.pose.position.z = model_data.pose[index].position.z;
+
+                ignition::math::Quaterniond q_gr = ignition::math::Quaterniond(
+                    model_data.pose[index].orientation.w,
+                    model_data.pose[index].orientation.x,
+                    model_data.pose[index].orientation.y,
+                    model_data.pose[index].orientation.z);
+
+                pose.pose.orientation.x = q_gr.X();
+                pose.pose.orientation.y = q_gr.Y();
+                pose.pose.orientation.z = q_gr.Z();
+                pose.pose.orientation.w = q_gr.W();
+        
+                _local_pose_pub.publish(pose);
+
+                vel.twist.linear.x = model_data.twist[index].linear.x;
+                vel.twist.linear.y = model_data.twist[index].linear.y;
+                vel.twist.linear.z = model_data.twist[index].linear.z;
+
+                vel.twist.angular.x = model_data.twist[index].angular.x;
+                vel.twist.angular.y = model_data.twist[index].angular.y;
+                vel.twist.angular.z = model_data.twist[index].angular.z;
+
+                _local_vel_pub.publish(vel);
+
+
+                odom.pose.pose.position.x = pose.pose.position.x;
+                odom.pose.pose.position.y = pose.pose.position.y;
+                odom.pose.pose.position.z = pose.pose.position.z;
+
+                odom.pose.pose.orientation.w = pose.pose.orientation.w;
+                odom.pose.pose.orientation.x = pose.pose.orientation.x;
+                odom.pose.pose.orientation.y = pose.pose.orientation.y;
+                odom.pose.pose.orientation.z = pose.pose.orientation.z;
+
+                odom.twist.twist = vel.twist;        
+            }
+            else if( frame == NED ) {
+
+                          R_nou2ned << 1, 0, 0, 0, -1, 0, 0, 0, -1;
+            Eigen::Vector3d pos_ned, pos_nou;
+            Eigen::Vector3d lin_vel_ned, lin_vel_nou;
+            Eigen::Vector3d ang_vel_ned, ang_vel_nou;
+            Eigen::Matrix3d R_body2world_nou, R_body2world_ned;
+
+            pos_nou << model_data.pose[index].position.x,
+                       model_data.pose[index].position.y,
+                       model_data.pose[index].position.z;
+                
+            pos_ned = R_nou2ned * pos_nou;
+
+            pose.pose.position.x = pos_ned(0);
+            pose.pose.position.y = pos_ned(1);
+            pose.pose.position.z = pos_ned(2);
+
+            Eigen::Quaterniond q_att_nou(
                 model_data.pose[index].orientation.w,
                 model_data.pose[index].orientation.x,
                 model_data.pose[index].orientation.y,
                 model_data.pose[index].orientation.z);
 
-            pose.pose.orientation.x = q_gr.X();
-            pose.pose.orientation.y = q_gr.Y();
-            pose.pose.orientation.z = q_gr.Z();
-            pose.pose.orientation.w = q_gr.W();
-    
+            R_body2world_nou = q_att_nou.toRotationMatrix();
+            R_body2world_ned = R_nou2ned * R_body2world_nou * R_nou2ned.transpose();
+
+            Eigen::Quaterniond q_att_ned( R_body2world_ned );
+
+            pose.pose.orientation.x = q_att_ned.x();
+            pose.pose.orientation.y = q_att_ned.y();
+            pose.pose.orientation.z = q_att_ned.z();
+            pose.pose.orientation.w = q_att_ned.w();
+
             _local_pose_pub.publish(pose);
 
-            vel.twist.linear.x = model_data.twist[index].linear.x;
-            vel.twist.linear.y = model_data.twist[index].linear.y;
-            vel.twist.linear.z = model_data.twist[index].linear.z;
+            lin_vel_nou << model_data.twist[index].linear.x,
+                           model_data.twist[index].linear.y,
+                           model_data.twist[index].linear.z;
 
-            vel.twist.angular.x = model_data.twist[index].angular.x;
-            vel.twist.angular.y = model_data.twist[index].angular.y;
-            vel.twist.angular.z = model_data.twist[index].angular.z;
+            lin_vel_ned = R_nou2ned * lin_vel_nou;
+
+            vel.twist.linear.x = lin_vel_ned(0);
+            vel.twist.linear.y = lin_vel_ned(1);
+            vel.twist.linear.z = lin_vel_ned(2);
+
+            ang_vel_nou << model_data.twist[index].angular.x,
+                           model_data.twist[index].angular.y,
+                           model_data.twist[index].angular.z;
+
+            ang_vel_ned = R_nou2ned * ang_vel_nou;
+
+            vel.twist.angular.x = ang_vel_ned(0);
+            vel.twist.angular.y = ang_vel_ned(1);
+            vel.twist.angular.z = ang_vel_ned(2);
 
             _local_vel_pub.publish(vel);
+                odom.pose.pose.position.x = pose.pose.position.x;
+                odom.pose.pose.position.y = pose.pose.position.y;
+                odom.pose.pose.position.z = pose.pose.position.z;
+
+                odom.pose.pose.orientation.w = pose.pose.orientation.w;
+                odom.pose.pose.orientation.x = pose.pose.orientation.x;
+                odom.pose.pose.orientation.y = pose.pose.orientation.y;
+                odom.pose.pose.orientation.z = pose.pose.orientation.z;
+
+                odom.twist.twist = vel.twist;        
+
+
+
+                
+            }
+            _odom_pub.publish( odom );
             
             // transform position from local ENU to local NED frame
-            /*
-            ignition::math::Vector3d position = q_ng.RotateVector(ignition::math::Vector3d( 
-                model_data.pose[index].position.x,
-                model_data.pose[index].position.y,
-                model_data.pose[index].position.z
-            ) );
-
-            pose.pose.position.x = position.X();
-            pose.pose.position.y = position.Y();
-            pose.pose.position.z = position.Z();
-
-            ignition::math::Quaterniond q_gr = ignition::math::Quaterniond(
-                model_data.pose[index].orientation.w,
-                model_data.pose[index].orientation.x,
-                model_data.pose[index].orientation.y,
-                model_data.pose[index].orientation.z);
-
-            ignition::math::Quaterniond q_gb = q_gr*q_br.Inverse();
-            ignition::math::Quaterniond q_nb = q_ng*q_gb;
-
-            pose.pose.orientation.x = q_nb.X();
-            pose.pose.orientation.y = q_nb.Y();
-            pose.pose.orientation.z = q_nb.Z();
-            pose.pose.orientation.w = q_nb.W();
-    
-            _local_pose_pub.publish(pose);
-
-            ignition::math::Vector3d linear_velocity = q_ng.RotateVector(ignition::math::Vector3d( 
-                model_data.twist[index].linear.x,
-                model_data.twist[index].linear.y,
-                model_data.twist[index].linear.z
-            ) );
-
-            vel.twist.linear.x = linear_velocity.X();
-            vel.twist.linear.y = linear_velocity.Y();
-            vel.twist.linear.z = linear_velocity.Z();
-
-            ignition::math::Vector3d angular_velocity = q_ng.RotateVector(ignition::math::Vector3d( 
-                model_data.twist[index].angular.x,
-                model_data.twist[index].angular.y,
-                model_data.twist[index].angular.z
-            ) );
-
-            vel.twist.angular.x = angular_velocity.X();
-            vel.twist.angular.y = angular_velocity.Y();
-            vel.twist.angular.z = angular_velocity.Z();
-
-            _local_vel_pub.publish(vel);
-            */
+            
+            
         }
     }
 
