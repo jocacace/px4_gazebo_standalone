@@ -362,15 +362,15 @@ namespace gazebo {
             //vision_sub_ = node_handle_->Subscribe("~/" + model_->GetName() + vision_sub_topic_, &GazeboROSInterface::VisionCallback, this);
     
             // Output
-            _imu_pub = _node_handle->advertise<sensor_msgs::Imu>("/tarot/imu/data", 0);
-            _gps_pub = _node_handle->advertise<sensor_msgs::NavSatFix>("tarot/gps/fix", 0);      
+            _imu_pub = _node_handle->advertise<sensor_msgs::Imu>(model_->GetName() + "/imu/data", 0);
+            _gps_pub = _node_handle->advertise<sensor_msgs::NavSatFix>(model_->GetName() + "/gps/fix", 0);      
             _odom_pub = _node_handle->advertise<nav_msgs::Odometry>( model_->GetName() + "/odometry", 0);
 
             motor_velocity_reference_pub_ = _gz_node->Advertise<mav_msgs::msgs::CommandMotorSpeed>("~/" + model_->GetName() + motor_velocity_reference_pub_topic_, 1);
             _local_pose_pub = _node_handle->advertise<geometry_msgs::PoseStamped>( model_->GetName() + "/local_pose", 0);
             _local_vel_pub = _node_handle->advertise<geometry_msgs::TwistStamped>( model_->GetName() + "/local_vel", 0);
 
-            _rotor_count = 5;
+            _rotor_count = _motor_size;
             #if GAZEBO_MAJOR_VERSION >= 9
                 last_time_ = world_->SimTime();
                 last_imu_time_ = world_->SimTime();
